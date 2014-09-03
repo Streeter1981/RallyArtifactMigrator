@@ -1,0 +1,83 @@
+#!/usr/bin/env ruby -W0
+
+require 'trollop'
+
+# ram Require needed for runtime (non-gem) testing
+require File.join(File.dirname(__FILE__), '..', '/lib/ram.rb')
+
+# Gem-based require
+#require 'ram'
+
+ARGV << "--help" if ARGV.size == 0
+
+opts = Trollop::options do
+	version "Rally Artifact Migrator v" + File.read(File.join(File.dirname(__FILE__), '..', 'VERSION'))
+	banner <<-EOS
+Rally Artifact Migrator is a utility for migrating Rally artifacts from one project to another
+
+Usage:
+	Usage: ram <config_file> [options]
+where [options] are:
+EOS
+	opt :all, "Verifies configuration, exports and imports the artifacts", :default => false
+	opt :skip_verification, "Skips verification of the configuration file", :default => false
+	opt :export, "Exports the source environment", :default => false
+	opt :import, "Imports the artifacts into the target environment", :default => false
+	opt :reset, "Resets the import transaction log", :default => false
+	opt :update, "Updates existing artifacts from a previous import", :default => false
+	opt :example_configuration, "Generate an example configuration file", :type => :string
+end
+
+unless opts[:help]
+
+	unless opts[:example_configuration]
+		config_file = ARGV[0]
+
+		begin
+			instance_eval File.read(config_file)
+			
+			if opts[:reset]
+			  print "Resetting transaction log... "
+			  ArtifactMigration::Exporter.reset_transaction_log
+			  puts "Transaction log reset"
+            end
+
+			valid = true
+			valid &&= ArtifactMigration::CLI.run_verification unless opts[:skip_verification]
+	
+			if valid
+				begin
+					ArtifactMigration::Configuration.singleton.source_config.update_existing = opts[:update]
+					ArtifactMigration::Configuration.singleton.target_config.update_existing = opts[:update]
+
+					ArtifactMigration::CLI.run_export if opts[:all] or opts[:export]
+
+					begin
+						ArtifactMigration::CLI.run_import if opts[:all] or opts[:import]
+					rescue Exception => ie
+						ArtifactMigration::Logger.debug ie
+						puts ie
+						puts "Issues occured during the import process."
+					end
+				
+				rescue Exception => ee
+					ArtifactMigration::Logger.debug ee
+					puts ee
+					puts "Issues occured during the export process."
+				end
+			else
+				puts "Errors were found in the config file."
+			end
+		rescue Exception => ce
+			ArtifactMigration::Logger.debug ce
+			puts ce
+			puts "Errors were found in the config file."
+		end
+	
+	else
+		out = File.open(opts[:example_configuration], 'w')
+		out << File.read(File.join(File.dirname(__FILE__), '..', 'example_config.rb'))
+		out.close
+		puts "#{opts[:example_configuration]} has been created!"
+	end
+end
